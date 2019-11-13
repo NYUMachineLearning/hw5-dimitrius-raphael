@@ -1,0 +1,147 @@
+---
+title: "Homework 5"
+output: html_notebook
+---
+
+## Homework
+
+1. Attempt a regression tree-based method (not covered in this tutorial) on a reasonable dataset of your choice. Explain the results. 
+
+2. Attempt both a bagging and boosting method on a reasonable dataset of your choice. Explain the results.
+
+
+#Regression Tree Model
+```{r}
+library(tidyverse)
+library(ISLR)
+library(randomForest)
+library(MASS)
+library(gbm)
+library(rpart)
+library(mlbench)
+```
+
+```{r}
+data("BreastCancer")
+
+head(BreastCancer)
+
+#Remove the ID column
+BreastCancer <- BreastCancer[,-1]
+
+#Convert the variables to numerics
+
+BreastCancer_num = transform(BreastCancer, 
+                             Cl.thickness = as.numeric(Cl.thickness),
+                         Cell.size = as.numeric(Cell.size),
+                         Cell.shape = as.numeric(Cell.shape), 
+                         Marg.adhesion = as.numeric(Marg.adhesion),
+                         Epith.c.size = as.numeric(Epith.c.size),
+                         Bare.nuclei = as.numeric(Bare.nuclei), 
+                         Bl.cromatin = as.numeric(Bl.cromatin), 
+                         Normal.nucleoli = as.numeric(Normal.nucleoli),
+                         Mitoses = as.numeric(Mitoses))
+
+BreastCancer_num[is.na(BreastCancer_num)] = 0
+```
+
+#Build the tree
+```{r}
+fit <- rpart(Class~.,
+   method="anova", data=BreastCancer_num)
+
+printcp(fit) # display the results
+plotcp(fit) # visualize cross-validation results
+summary(fit) # detailed summary of splits
+
+# create additional plots
+par(mfrow=c(1,2)) # two plots on one page
+rsq.rpart(fit) # visualize cross-validation results  
+
+# plot tree
+plot(fit, uniform=TRUE,
+   main="Regression Tree for Breast Cancer")
+text(fit, use.n=TRUE, all=TRUE, cex=.8)
+
+```
+
+#Must prune the tree
+
+```{r}
+# prune the tree
+pfit<- prune(fit, cp=0.010000) # from cptable   
+
+# plot the pruned tree
+plot(pfit, uniform=TRUE,
+   main="Pruned Regression Tree for Breast Cancer")
+text(pfit, use.n=TRUE, all=TRUE, cex=.8)
+```
+
+The results of the regression tree detail that all observations with a cell size < 2.5 and Bare.nuclei < 5.5 will be benign. However, observations that do not follow this path, for example, if an observation has a cell size greater than 3.5 and bare nuclei less than 2.5 then it is likely to have breast cancer. Essentially, the decision trees show the most significant parameters for particular variables that can be used to classify the predictions of the observations.
+
+#Bagging
+```{r}
+data("USRegionalMortality")
+head(USRegionalMortality)
+#set seed for reproducibility 
+set.seed(29)
+
+#split into train and test sets (300 and 206 respectively)
+train = sample(1:nrow(USRegionalMortality),250)
+
+#fit training subset of data to model 
+rf.mort = randomForest(Rate~., data = USRegionalMortality, subset = train)
+rf.mort
+
+
+summary(rf.mort)
+#summary of rf.bc gives information about the number of trees, the mean squared residuals (MSR), and the percentage of variance explained
+
+#No. of variables tried at each split: 1
+#Each time the tree comes to split a node, 1 variable would be selected at random, then the split would be confined to 1 of those variables.
+
+##Lets try a range of mtry (number of variables selected at random at each split)
+
+oob.err = double(5)
+test.err = double(5)
+
+#In a loop of mtry from 1 to 9, you first fit the randomForest to the train dataset
+for(mtry in 1:5){
+  fit = randomForest(Rate~ ., data = USRegionalMortality, subset=train, mtry=mtry, ntree = 350)
+  oob.err[mtry] = fit$mse[350] ##extract Mean-squared-error 
+  pred = predict(fit, USRegionalMortality[-train,]) #predict on test dataset
+  test.err[mtry] = with(USRegionalMortality[-train,], mean( (Rate-pred)^2 )) #compute test error
+}
+
+#Visualize 
+matplot(1:mtry, cbind(test.err, oob.err), pch = 23, col = c("red", "blue"), type = "b", ylab="Mean Squared Error")
+legend("topright", legend = c("OOB", "Test"), pch = 23, col = c("red", "blue"))
+```
+What these results tell us is that 82% of the variance within the mortality rate can be explained using the randomForest model. In addition, by increasing the number of variables at random for each split, you improve the model and lower the mean squared error rate.
+
+
+#Boosting
+```{r}
+#Gradient Boosting Model
+boost.mort = gbm(Rate~., data = USRegionalMortality[train,], distribution = "gaussian", n.trees = 10000, shrinkage = 0.01, interaction.depth = 4)
+
+#Variable Importance Plot
+summary(boost.mort)
+
+#Visualize important variables of interest
+plot(boost.mort,i="Sex")
+plot(boost.mort,i="Cause")
+
+#Predict on test set
+n.trees = seq(from = 100, to = 10000, by = 100)
+predmat = predict(boost.mort, newdata = USRegionalMortality[-train,], n.trees = n.trees)
+dim(predmat)
+
+#Visualize Boosting Error Plot
+boost.err = with(USRegionalMortality[-train,], apply( (predmat - Rate)^2, 2, mean) )
+plot(n.trees, boost.err, pch = 23, ylab = "Mean Squared Error", xlab = "# Trees", main = "Boosting Test Error")
+abline(h = min(test.err), col = "red")
+```
+
+Boosting provided another means to improve the predictive model and lower the mean squared error rate. What these plots tell us is that 'Cause' is the most important variable explaining the variance within the Mortality Rate, followed by 'Sex.'
+
